@@ -1,0 +1,155 @@
+import networkx as nx
+import numpy as np
+import time
+import random
+import csv 
+import os 
+
+
+def has_edge_matrix(matrix, u, v):
+    if 0 <= u < matrix.shape[0] and 0 <= v < matrix.shape[1]:
+        return matrix[u, v] == 1
+    return False
+
+def has_edge_list(a_list, u, v):
+    if u in a_list:
+        return v in a_list[u]
+    return False
+
+
+def create_random_graph(num_nodes, num_edges):
+    if num_nodes <= 0:
+        return nx.Graph()
+    max_edges = num_nodes * (num_nodes - 1) // 2
+    actual_num_edges = max(0, min(num_edges, max_edges))
+    if actual_num_edges == 0 and num_nodes > 0:
+        G = nx.Graph()
+        G.add_nodes_from(range(num_nodes))
+        return G
+    elif actual_num_edges == 0 and num_nodes == 0:
+        return nx.Graph()
+    return nx.gnm_random_graph(num_nodes, actual_num_edges)
+
+def run_has_edge_experiment_for_dataset(graph_nx, num_queries=1000): 
+    if not graph_nx.nodes:
+        return 0.0, 0.0, 0.0, 0.0 
+
+    
+    start_time_matrix_creation = time.perf_counter()
+    adj_matrix = nx.to_numpy_array(graph_nx, dtype=np.int8)
+    end_time_matrix_creation = time.perf_counter()
+    time_matrix_creation_ms = (end_time_matrix_creation - start_time_matrix_creation) * 1000
+
+    start_time_list_creation = time.perf_counter()
+    adj_list = {node: list(graph_nx.neighbors(node)) for node in graph_nx.nodes()}
+    end_time_list_creation = time.perf_counter()
+    time_list_creation_ms = (end_time_list_creation - start_time_list_creation) * 1000
+    
+    nodes_list = list(graph_nx.nodes())
+    if len(nodes_list) < 2:
+        
+        return time_matrix_creation_ms, time_list_creation_ms, 0.0, 0.0
+
+    queries = []
+    for _ in range(num_queries):
+        u, v = random.sample(nodes_list, 2)
+        queries.append((u, v))
+
+    start_time = time.perf_counter()
+    for u, v in queries:
+        has_edge_matrix(adj_matrix, u, v)
+    end_time = time.perf_counter()
+    time_matrix_query_ms = ((end_time - start_time) * 1000) / num_queries if num_queries > 0 else 0
+
+    start_time = time.perf_counter()
+    for u, v in queries:
+        has_edge_list(adj_list, u, v)
+    end_time = time.perf_counter()
+    time_list_query_ms = ((end_time - start_time) * 1000) / num_queries if num_queries > 0 else 0
+    
+    return time_matrix_creation_ms, time_list_creation_ms, time_matrix_query_ms, time_list_query_ms
+
+
+
+print("\n--- FAZ 3: Veri Seti Oluşturma ---")
+
+
+node_counts = [10, 50, 100, 200, 500] 
+
+
+density_percentages = {
+    "Sparse": 0.05,  
+    "Medium": 0.25, 
+    "Dense": 0.60    
+}
+replications_per_setting = 5 
+num_queries_per_graph = 2000 
+
+dataset_rows = []
+csv_header = [
+    "GraphID", "NumNodes", "NumEdges", "MaxPossibleEdges", "DensityCategory", "DensityValue",
+    "MatrixCreationTime_ms", "ListCreationTime_ms",
+    "AvgMatrixQueryTime_ms", "AvgListQueryTime_ms", "Algorithm"
+]
+dataset_rows.append(csv_header)
+
+graph_id_counter = 0
+
+for V in node_counts:
+    print(f"Processing graphs with V={V} nodes...")
+    max_E_for_V = V * (V - 1) // 2 if V > 1 else 0
+    
+    for density_name, density_perc in density_percentages.items():
+        if V <= 1 and density_perc > 0 : 
+            num_E = 0
+        elif V > 1 and density_perc > 0:
+             
+             
+            min_edges_for_connectivity_approx = V -1 
+            calculated_edges = int(max_E_for_V * density_perc)
+            num_E = max(min_edges_for_connectivity_approx if density_name == "Sparse" else 0 , calculated_edges) 
+            num_E = min(num_E, max_E_for_V) 
+        else:
+            num_E = 0
+
+        print(f"  Density: {density_name} (Target E ~ {num_E})")
+        
+        for rep in range(replications_per_setting):
+            graph_id_counter += 1
+            current_graph_id = f"g_{V}_{density_name}_{rep+1}"
+            
+            
+            
+            G = create_random_graph(V, num_E)
+            actual_E = G.number_of_edges()
+
+            
+            mc_time, lc_time, mq_time, lq_time = run_has_edge_experiment_for_dataset(G, num_queries_per_graph)
+            
+            
+            row = [
+                current_graph_id, V, actual_E, max_E_for_V, density_name, 
+                (actual_E / max_E_for_V if max_E_for_V > 0 else 0), 
+                mc_time, lc_time, mq_time, lq_time, "has_edge"
+            ]
+            dataset_rows.append(row)
+            
+            if (rep + 1) % 2 == 0 : 
+                 print(f"    Replication {rep+1}/{replications_per_setting} done. V={V}, E_actual={actual_E}, MatrixQuery: {mq_time:.6f}ms, ListQuery: {lq_time:.6f}ms")
+
+
+
+
+desktop_path = os.path.join(os.path.join(os.path.expanduser('~')), 'Desktop')
+csv_filename = os.path.join(desktop_path, "graph_has_edge_performance_dataset.csv")
+
+try:
+    with open(csv_filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerows(dataset_rows)
+    print(f"\nVeri seti başarıyla '{csv_filename}' dosyasına kaydedildi.")
+except IOError:
+    print(f"\nHATA: '{csv_filename}' dosyasına yazılamadı. Lütfen dosya izinlerini kontrol edin veya farklı bir yol deneyin.")
+   
+
+
